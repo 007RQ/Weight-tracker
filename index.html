@@ -303,19 +303,18 @@
       position: fixed; left: 0; right: 0; bottom: 0;
       display: flex; justify-content: space-around;
       padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-      background: rgba(12, 13, 20, 0.85);
-      -webkit-backdrop-filter: blur(22px);
-      backdrop-filter: blur(22px);
+      background: rgba(12, 13, 20, 0.92);
       border-top: 1px solid var(--line);
       z-index: 10;
-      overflow: hidden;
+      isolation: isolate;
     }
     .tab {
       flex: 1; background: none; border: 0;
       color: var(--muted); font-size: 12px; font-weight: 600;
       display: flex; flex-direction: column; align-items: center; gap: 4px;
       cursor: pointer;
-      position: relative; z-index: 1;
+      position: relative; z-index: 2;
+      -webkit-tap-highlight-color: transparent;
       transition: color 0.3s;
     }
     .tab .ico { font-size: 20px; transition: transform 0.4s var(--ease); }
@@ -327,16 +326,13 @@
       top: 8px; bottom: 8px; left: 12px;
       width: calc((100% - 24px) / 3);
       border-radius: 20px;
-      background: linear-gradient(160deg, rgba(255,255,255,0.22), rgba(255,255,255,0.05));
-      -webkit-backdrop-filter: blur(10px) saturate(180%);
-      backdrop-filter: blur(10px) saturate(180%);
+      background: linear-gradient(160deg, rgba(255,255,255,0.18), rgba(255,255,255,0.05));
       box-shadow:
-        inset 0 1px 0 rgba(255,255,255,0.45),
-        inset 0 -1px 0 rgba(255,255,255,0.08),
+        inset 0 1px 0 rgba(255,255,255,0.4),
         0 8px 24px rgba(0,0,0,0.35);
       transition: transform 0.65s cubic-bezier(0.34, 1.45, 0.64, 1);
       pointer-events: none;
-      z-index: 0;
+      z-index: 1;
     }
 
     /* ---------- toast ---------- */
@@ -350,6 +346,7 @@
       max-width: 92vw; font-size: 15px; font-weight: 600; line-height: 1.35;
       z-index: 20;
       box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
+      pointer-events: none;
     }
     .toast.show { transform: translate(-50%, 0); }
     .toast.good { border-color: rgba(52, 211, 153, 0.6); }
@@ -516,11 +513,11 @@
     </section>
   </main>
 
-  <nav class="tabbar">
+  <nav class="tabbar" id="tabbar">
     <div class="tab-pill" id="tab-pill"></div>
-    <button class="tab active" data-tab="today"><span class="ico">◉</span>Сегодня</button>
-    <button class="tab" data-tab="stats"><span class="ico">▤</span>Статистика</button>
-    <button class="tab" data-tab="analysis"><span class="ico">✦</span>Анализ</button>
+    <button class="tab active" data-tab="today" type="button"><span class="ico">◉</span>Сегодня</button>
+    <button class="tab" data-tab="stats" type="button"><span class="ico">▤</span>Статистика</button>
+    <button class="tab" data-tab="analysis" type="button"><span class="ico">✦</span>Анализ</button>
   </nav>
 
   <div class="toast" id="toast" role="status"></div>
@@ -565,13 +562,13 @@
 
   <script>
   // Показываем любую ошибку прямо на экране, а не чёрным экраном
-  window.addEventListener('error', (e) => showError(e.message + '\nстрока: ' + e.lineno));
-  window.addEventListener('unhandledrejection', (e) => showError(String(e.reason)));
   function showError(msg) {
     const el = document.getElementById('err');
     el.textContent = 'Ошибка:\n' + msg;
     el.style.display = 'block';
   }
+  window.addEventListener('error', (e) => showError((e.message || 'неизвестно') + '\nстрока: ' + e.lineno));
+  window.addEventListener('unhandledrejection', (e) => showError(String(e.reason)));
 
   try {
   /* ================= UTILS ================= */
@@ -741,4 +738,632 @@
       insights.push({ t: 'good', x: 'Цель по весу достигнута. Можно фиксировать результат.' });
     } else if (daysLeft < 0) {
       insights.push({ t: 'bad', x: 'Дата цели прошла, а вес всё ещё выше цели.' });
+    } else if (weekRate !== null) {
+      const pct = (Math.abs(weekRate) / trend) * 100;
+      if (weekRate >= 0 && E.length >= 5) {
+        insights.push({ t: 'bad', x: 'За последние две недели тренд не идёт вниз.' });
+      } else if (pct > 1) {
+        insights.push({
+          t: 'warn',
+          x: `Темп ${fmt(pct, 2)}% в неделю — агрессивно, риск потери мышц. Оптимум 0,5–0,8%.`,
+        });
+      } else if (pct >= 0.4) {
+        insights.push({ t: 'good', x: `Темп ${fmt(pct, 2)}% в неделю — хорошая зона для сохранения мышц.` });
+      } else if (weekRate < 0) {
+        insights.push({ t: 'warn', x: `Темп ${fmt(pct, 2)}% в неделю — медленно, можно чуть ускориться.` });
+      }
     }
+
+    if (projected) {
+      const late = diffDays(s.goalDate, projected);
+      insights.push(
+        late > 0
+          ? { t: 'warn', x: `При текущем темпе цель к ${fmtDate(projected)} — на ${late} дн. позже срока.` }
+          : { t: 'good', x: `При текущем темпе цель к ${fmtDate(projected)} — раньше срока.` }
+      );
+    } else if (toGo > 0 && daysLeft >= 0 && E.length >= 5) {
+      insights.push({ t: 'bad', x: 'Прогноза достижения цели нет: тренд не снижается.' });
+    }
+
+    if (body && body.totalDelta < 0 && body.leanShare !== null) {
+      if (body.leanShare > 0.25) {
+        insights.push({
+          t: 'warn',
+          x: `Около ${Math.round(body.leanShare * 100)}% потери веса приходится на мышцы. Держи белок и силовые.`,
+        });
+      } else if (body.bfDelta < 0) {
+        insights.push({ t: 'good', x: 'Жир уходит, мышцы в основном сохраняются.' });
+      }
+    }
+
+    return {
+      ready: true,
+      empty: !E.length,
+      trend, toGo, progress, daysLeft, daysTotal, dayNum,
+      weekRate, requiredWeek, projected, lastDelta,
+      stall, stallStreak, deltas, body, insights,
+    };
+  }
+
+  /* ================= CHARTS ================= */
+  const W = 360;
+  const PAD = { t: 14, r: 10, b: 24, l: 40 };
+
+  function smoothPath(P) {
+    if (P.length < 2) return '';
+    let d = `M${P[0][0]},${P[0][1]}`;
+    for (let i = 0; i < P.length - 1; i++) {
+      const p0 = P[i - 1] || P[i];
+      const p1 = P[i];
+      const p2 = P[i + 1];
+      const p3 = P[i + 2] || p2;
+      const c1x = p1[0] + (p2[0] - p0[0]) / 6;
+      const c1y = p1[1] + (p2[1] - p0[1]) / 6;
+      const c2x = p2[0] - (p3[0] - p1[0]) / 6;
+      const c2y = p2[1] - (p3[1] - p1[1]) / 6;
+      d += ` C${c1x},${c1y} ${c2x},${c2y} ${p2[0]},${p2[1]}`;
+    }
+    return d;
+  }
+
+  function renderLineChart(el, { series, goal = null, height = 210, xTicks = [] }) {
+    const pts = series.flatMap((s) => s.points);
+    if (!pts.length) {
+      el.innerHTML = '<p class="empty">Пока нет данных</p>';
+      return;
+    }
+
+    const H = height;
+    const xs = pts.map((p) => p.x);
+    const xMin = Math.min(...xs);
+    let xMax = Math.max(...xs);
+    if (xMax === xMin) xMax = xMin + 1;
+
+    const ys = pts.map((p) => p.y);
+    if (goal != null) ys.push(goal);
+    let yMin = Math.min(...ys);
+    let yMax = Math.max(...ys);
+    const pad = (yMax - yMin) * 0.15 || 0.5;
+    yMin -= pad;
+    yMax += pad;
+
+    const sx = (x) => PAD.l + ((x - xMin) / (xMax - xMin)) * (W - PAD.l - PAD.r);
+    const sy = (y) => PAD.t + (1 - (y - yMin) / (yMax - yMin)) * (H - PAD.t - PAD.b);
+    const uid = 'g' + Math.random().toString(36).slice(2, 8);
+
+    let svg = `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img"><defs>${series
+      .map(
+        (s, i) => `<linearGradient id="${uid}${i}" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="${s.color}" stop-opacity=".38"/>
+          <stop offset="1" stop-color="${s.color}" stop-opacity="0"/>
+        </linearGradient>`
+      )
+      .join('')}</defs>`;
+
+    for (let i = 0; i <= 3; i++) {
+      const y = PAD.t + (i * (H - PAD.t - PAD.b)) / 3;
+      const v = yMax - (i * (yMax - yMin)) / 3;
+      svg += `<line class="grid" x1="${PAD.l}" x2="${W - PAD.r}" y1="${y}" y2="${y}"/>
+              <text class="axis" x="${PAD.l - 6}" y="${y + 4}" text-anchor="end">${fmt(v, 1)}</text>`;
+    }
+
+    xTicks.forEach((t) => {
+      const anchor = t.x === xMin ? 'start' : t.x === xMax ? 'end' : 'middle';
+      svg += `<text class="axis" x="${sx(t.x)}" y="${H - 6}" text-anchor="${anchor}">${t.label}</text>`;
+    });
+
+    if (goal != null) {
+      const gy = sy(goal);
+      svg += `<line class="goal" x1="${PAD.l}" x2="${W - PAD.r}" y1="${gy}" y2="${gy}"/>
+              <text class="goal-label" x="${W - PAD.r}" y="${gy - 6}" text-anchor="end">цель ${fmt(goal, 1)}</text>`;
+    }
+
+    series.forEach((s, i) => {
+      const P = s.points.map((p) => [sx(p.x), sy(p.y)]);
+      const base = H - PAD.b;
+
+      if (s.area && P.length > 1) {
+        svg += `<path class="area" d="${smoothPath(P)} L${P.at(-1)[0]},${base} L${P[0][0]},${base} Z"
+                fill="url(#${uid}${i})"/>`;
+      }
+      if (s.line && P.length > 1) {
+        svg += `<path class="draw" d="${smoothPath(P)}" fill="none" stroke="${s.color}"
+                stroke-width="${s.width || 3}" stroke-linecap="round" stroke-linejoin="round"/>`;
+      }
+      if (s.dots) {
+        P.forEach((p, j) => {
+          svg += `<circle class="dot" cx="${p[0]}" cy="${p[1]}" r="${s.dotR || 3.5}" fill="${s.color}"
+                  style="animation-delay:${Math.min(j * 22, 1100)}ms">
+                  <title>${s.points[j].label || ''}</title></circle>`;
+        });
+      }
+    });
+
+    el.innerHTML = svg + '</svg>';
+
+    el.querySelectorAll('.draw').forEach((p) => {
+      const len = p.getTotalLength();
+      p.style.strokeDasharray = len;
+      p.style.strokeDashoffset = len;
+      p.getBoundingClientRect();
+      p.style.transition = 'stroke-dashoffset 1.6s cubic-bezier(0.22, 0.8, 0.3, 1)';
+      p.style.strokeDashoffset = 0;
+    });
+  }
+
+  function renderBars(el, items) {
+    if (!items.length) {
+      el.innerHTML = '<p class="empty">Нужно минимум два замера</p>';
+      return;
+    }
+    const max = Math.max(0.3, ...items.map((i) => Math.abs(i.v)));
+    el.innerHTML = `<div class="bars">${items
+      .map((it, i) => {
+        const h = Math.max(6, (Math.abs(it.v) / max) * 100);
+        const cls = it.v > -STALL ? 'bad' : 'good';
+        const sign = it.v > 0 ? '+' : '';
+        return `<div class="bar-col" title="${it.label}: ${sign}${fmt(it.v, 2)} кг">
+          <div class="bar ${cls}" style="--h:${h}%;animation-delay:${i * 30}ms"></div>
+          <span>${it.short}</span>
+        </div>`;
+      })
+      .join('')}</div>`;
+  }
+
+  /* ================= APP ================= */
+  let state = load();
+
+  const $ = (s) => document.querySelector(s);
+  const $$ = (s) => [...document.querySelectorAll(s)];
+  const num = (el) => {
+    const v = parseFloat(String(el.value).replace(',', '.'));
+    return Number.isFinite(v) ? v : null;
+  };
+  const avg = (arr) => arr.reduce((a, b) => a + b, 0) / arr.length;
+  const pick = (arr, seed = 0) => arr[Math.abs(seed) % arr.length];
+
+  const BAD_MSG = [
+    'Вес не пошёл вниз. Проверь соль, сон и вчерашние углеводы.',
+    'Стоим на месте — это сигнал, а не провал. Минус 150 ккал или +3000 шагов.',
+    'Плюс на весах чаще вода и еда. Смотри тренд за неделю, а не один день.',
+    'Цель не ждёт. Завтра — снижение.',
+  ];
+  const GOOD_MSG = [
+    'Минус на весах — ты в графике. Держи темп.',
+    'Цель ближе. Так и надо.',
+    'Дисциплина считается. Отличный день.',
+  ];
+
+  function setAppIcons() {
+    const logo = document.querySelector('.logo').cloneNode(true);
+    logo.setAttribute('width', '512');
+    logo.setAttribute('height', '512');
+    const svg = new XMLSerializer().serializeToString(logo);
+    const url = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+    $('#favicon').href = url;
+
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 180;
+      c.getContext('2d').drawImage(img, 0, 0, 180, 180);
+      $('#apple-icon').href = c.toDataURL('image/png');
+    };
+    img.src = url;
+  }
+
+  function countUp(el, to, dec = 1, suffix = '') {
+    const from = parseFloat(el.dataset.v) || 0;
+    el.dataset.v = to;
+    const t0 = performance.now();
+    const dur = 900;
+    const step = (now) => {
+      const k = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = fmt(from + (to - from) * e, dec) + suffix;
+      if (k < 1) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  }
+
+  let toastTimer;
+  function toast(msg, kind = 'good') {
+    const el = $('#toast');
+    el.textContent = msg;
+    el.className = `toast show ${kind}`;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), kind === 'bad' ? 5000 : 3500);
+  }
+
+  /* ----- табы ----- */
+  const TABS = ['today', 'stats', 'analysis'];
+  const activeTab = () => $('.tab.active').dataset.tab;
+
+  function movePill(name) {
+    const i = TABS.indexOf(name);
+    $('#tab-pill').style.transform = `translateX(${i * 100}%)`;
+  }
+
+  function showTab(name) {
+    try {
+      $$('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
+      $$('.screen').forEach((s) => s.classList.toggle('active', s.id === `screen-${name}`));
+      movePill(name);
+      renderAll();
+    } catch (err) {
+      showError(err && err.stack ? err.stack : String(err));
+    }
+    window.scrollTo(0, 0);
+  }
+
+  // один обработчик на всю панель вместо привязки к каждой кнопке
+  $('#tabbar').addEventListener('click', (e) => {
+    const btn = e.target.closest('.tab');
+    if (btn) showTab(btn.dataset.tab);
+  });
+
+  function renderAll() {
+    renderToday();
+    if (activeTab() === 'stats') renderStats();
+    if (activeTab() === 'analysis') renderAnalysis();
+  }
+
+  /* ================= СЕГОДНЯ ================= */
+  function renderToday() {
+    const a = analyze(state);
+    $('#goal-setup').classList.toggle('hidden', a.ready);
+    $('#today-label').textContent = fmtDate(todayISO(), {
+      weekday: 'long', day: 'numeric', month: 'long',
+    });
+    if (!a.ready) {
+      $('#hero-weight').textContent = '—';
+      $('#last-delta').textContent = '—';
+      $('#status-msg').textContent = '';
+      $('#req-val').textContent = '—';
+      $('#pace-val').textContent = '—';
+      return;
+    }
+
+    const s = state.settings;
+    countUp($('#hero-weight'), a.trend, 1, ' кг');
+
+    $('#day-pill').textContent = `День ${a.dayNum} / ${a.daysTotal}`;
+    $('#days-left').textContent = a.daysLeft >= 0 ? `ещё ${a.daysLeft} дн.` : 'срок прошёл';
+    $('#m-start').textContent = `Старт ${fmt(s.startWeight, 1)}`;
+    $('#m-goal').textContent = `Цель ${fmt(s.goalWeight, 1)}`;
+    $('#m-pct').textContent = `${Math.round(a.progress)}%`;
+    $('#to-go').textContent =
+      a.toGo > 0
+        ? `До цели ${fmt(a.toGo, 1)} кг · к ${fmtDate(s.goalDate, { day: 'numeric', month: 'long' })}`
+        : 'Цель достигнута 🎉';
+
+    const fill = $('#progress-fill');
+    fill.style.width = `${a.progress}%`;
+    fill.classList.toggle('bad', a.stall);
+    $('#progress-card').classList.toggle('is-alert', a.stall);
+
+    const status = $('#today-status');
+    const big = $('#last-delta');
+    const msg = $('#status-msg');
+    status.classList.toggle('is-alert', a.stall);
+
+    if (a.lastDelta === null) {
+      big.textContent = '—';
+      big.className = 'big-delta';
+      msg.textContent = 'Нужно минимум два замера, чтобы увидеть динамику.';
+    } else {
+      big.textContent = `${signed(a.lastDelta)} кг`;
+      big.className = `big-delta ${a.stall ? 'bad-text' : 'good-text'}`;
+      msg.textContent = a.stall ? pick(BAD_MSG, a.stallStreak) : pick(GOOD_MSG, a.dayNum);
+    }
+
+    $('#req-val').textContent =
+      a.toGo <= 0 ? 'Готово' : a.requiredWeek === null ? 'Срок прошёл' : `−${fmt(a.requiredWeek, 2)} кг`;
+
+    const paceEl = $('#pace-val');
+    if (a.weekRate === null) {
+      paceEl.textContent = '—';
+      paceEl.className = 'mini-val';
+    } else {
+      paceEl.textContent = `${signed(a.weekRate)} кг`;
+      paceEl.className = `mini-val ${a.weekRate >= 0 ? 'bad-text' : 'good-text'}`;
+    }
+  }
+
+  /* ----- форма замера ----- */
+  function fillFormFor(date) {
+    const e = state.entries.find((x) => x.date === date);
+    $('#f-weight').value = e ? fmt(e.weight, 1) : '';
+    $('#f-bf').value = e && e.bf != null ? fmt(e.bf, 1) : '';
+  }
+
+  $('#f-date').max = todayISO();
+  $('#f-date').value = todayISO();
+  $('#f-date').addEventListener('change', (e) => fillFormFor(e.target.value));
+  fillFormFor(todayISO());
+
+  $('#entry-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const date = $('#f-date').value || todayISO();
+    const weight = num($('#f-weight'));
+    const bf = $('#f-bf').value.trim() === '' ? null : num($('#f-bf'));
+
+    if (weight === null || weight < 30 || weight > 300) return toast('Проверь вес', 'bad');
+    if (bf !== null && (bf < 3 || bf > 60)) return toast('Проверь процент жира', 'bad');
+    if (date > todayISO()) return toast('Дата из будущего', 'bad');
+
+    const prev = state.entries.filter((x) => x.date < date).at(-1);
+    upsertEntry(state, { date, weight, bf });
+    save(state);
+
+    if (!prev) {
+      toast('Первый замер записан. Поехали 🚀');
+    } else {
+      const d = weight - prev.weight;
+      if (d > -STALL) {
+        toast(`${signed(d)} кг. ${pick(BAD_MSG, Math.floor(Math.random() * 4))}`, 'bad');
+      } else {
+        toast(`${signed(d)} кг. Так держать 🔥`, 'good');
+      }
+    }
+    renderAll();
+  });
+
+  /* ================= СТАТИСТИКА ================= */
+  function weeklyRows() {
+    const E = state.entries;
+    if (!E.length) return [];
+    const base = E[0].date;
+    const map = new Map();
+    for (const e of E) {
+      const w = Math.floor(diffDays(base, e.date) / 7);
+      if (!map.has(w)) map.set(w, { w, ws: [], bfs: [] });
+      const g = map.get(w);
+      g.ws.push(e.weight);
+      if (e.bf != null) g.bfs.push(e.bf);
+    }
+    const rows = [...map.values()]
+      .sort((a, b) => a.w - b.w)
+      .map((g) => ({ w: g.w, avg: avg(g.ws), bf: g.bfs.length ? avg(g.bfs) : null }));
+    rows.forEach((r, i) => (r.d = i ? r.avg - rows[i - 1].avg : null));
+    return rows;
+  }
+
+  function renderStats() {
+    const E = state.entries;
+    const s = state.settings;
+
+    if (!E.length) {
+      $('#stat-grid').innerHTML =
+        '<div class="card"><p class="empty">Внеси первый замер, и здесь появится статистика.</p></div>';
+      ['#chart-weight', '#chart-bars', '#chart-bf'].forEach(
+        (id) => ($(id).innerHTML = '<p class="empty">Нет данных</p>')
+      );
+      $('#weeks').innerHTML = '';
+      $('#history').innerHTML = '';
+      return;
+    }
+
+    const first = E[0];
+    const last = E.at(-1);
+    const ws = E.map((e) => e.weight);
+    const change = last.weight - first.weight;
+    const bfE = E.filter((e) => e.bf != null);
+    const lastBf = bfE.at(-1);
+    const lean = lastBf ? lastBf.weight * (1 - lastBf.bf / 100) : null;
+    const toGo = s ? last.weight - s.goalWeight : null;
+
+    const cards = [
+      ['Сейчас', `${fmt(last.weight, 1)} кг`],
+      ['С начала', `${signed(change, 1)} кг`, change < 0 ? 'good-text' : 'bad-text'],
+      ['До цели', toGo === null ? '—' : toGo > 0 ? `${fmt(toGo, 1)} кг` : 'Готово'],
+      ['Минимум', `${fmt(Math.min(...ws), 1)} кг`],
+      ['Жир', lastBf ? `${fmt(lastBf.bf, 1)}%` : '—'],
+      ['Мышцы', lean !== null ? `${fmt(lean, 1)} кг` : '—'],
+    ];
+    $('#stat-grid').innerHTML = cards
+      .map(([l, v, c = '']) => `<div class="card"><p class="label">${l}</p><p class="stat-val ${c}">${v}</p></div>`)
+      .join('');
+
+    const X = (d) => diffDays(first.date, d);
+    const ma = movingAverage(E);
+    renderLineChart($('#chart-weight'), {
+      series: [
+        {
+          points: E.map((e) => ({ x: X(e.date), y: e.weight, label: `${fmtDate(e.date)}: ${fmt(e.weight, 1)} кг` })),
+          color: '#94a3b8',
+          dots: true,
+          dotR: 3,
+        },
+        {
+          points: ma.map((m) => ({ x: X(m.date), y: m.value })),
+          color: '#7c5cff',
+          line: true,
+          area: true,
+          width: 3.5,
+        },
+      ],
+      goal: s ? s.goalWeight : null,
+      xTicks: [
+        { x: 0, label: fmtDate(first.date) },
+        { x: X(last.date), label: fmtDate(last.date) },
+      ],
+    });
+
+    const deltaItems = E.map((e, i) => ({ date: e.date, v: i ? e.weight - E[i - 1].weight : null }))
+      .filter((x) => x.v !== null)
+      .slice(-30)
+      .map((x) => ({ v: x.v, label: fmtDate(x.date), short: fmtDate(x.date, { day: 'numeric' }) }));
+    renderBars($('#chart-bars'), deltaItems);
+
+    if (bfE.length) {
+      renderLineChart($('#chart-bf'), {
+        series: [
+          {
+            points: bfE.map((e) => ({ x: X(e.date), y: e.bf, label: `${fmtDate(e.date)}: ${fmt(e.bf, 1)}%` })),
+            color: '#22d3ee',
+            line: bfE.length > 1,
+            area: bfE.length > 1,
+            dots: true,
+            dotR: 3.5,
+          },
+        ],
+        xTicks: [
+          { x: X(bfE[0].date), label: fmtDate(bfE[0].date) },
+          { x: X(bfE.at(-1).date), label: fmtDate(bfE.at(-1).date) },
+        ],
+      });
+    } else {
+      $('#chart-bf').innerHTML = '<p class="empty">Добавляй процент жира, и здесь появится график</p>';
+    }
+
+    const rows = weeklyRows();
+    $('#weeks').innerHTML =
+      `<tr><th>Нед</th><th>Средний</th><th>Δ</th><th>Жир</th></tr>` +
+      rows
+        .map(
+          (r) => `<tr>
+            <td>${r.w + 1}</td>
+            <td>${fmt(r.avg, 1)}</td>
+            <td class="${r.d === null ? '' : r.d >= 0 ? 'bad-text' : 'good-text'}">${r.d === null ? '—' : signed(r.d, 2)}</td>
+            <td>${r.bf === null ? '—' : fmt(r.bf, 1) + '%'}</td>
+          </tr>`
+        )
+        .join('');
+
+    $('#history').innerHTML = [...E]
+      .reverse()
+      .map(
+        (e) => `<div class="hist-row">
+          <div>
+            <b>${fmtDate(e.date, { day: 'numeric', month: 'long', weekday: 'short' })}</b>
+            <div class="muted small">${fmt(e.weight, 1)} кг${e.bf != null ? ` · ${fmt(e.bf, 1)}%` : ''}</div>
+          </div>
+          <button data-del="${e.date}" aria-label="Удалить">✕</button>
+        </div>`
+      )
+      .join('');
+  }
+
+  $('#history').addEventListener('click', (e) => {
+    const d = e.target.dataset.del;
+    if (!d || !confirm('Удалить замер?')) return;
+    removeEntry(state, d);
+    save(state);
+    renderAll();
+  });
+
+  /* ================= АНАЛИЗ ================= */
+  function renderAnalysis() {
+    const a = analyze(state);
+    const proj = $('#proj-card');
+    const grid = $('#body-grid');
+    const ins = $('#insights');
+
+    if (!a.ready) {
+      proj.innerHTML = '<p class="label">Прогноз</p><p class="muted">Задай цель, чтобы увидеть прогноз.</p>';
+      grid.innerHTML = '';
+      ins.innerHTML = '';
+      return;
+    }
+
+    const s = state.settings;
+    const projText = a.projected
+      ? fmtDate(a.projected, { day: 'numeric', month: 'long' })
+      : a.toGo <= 0 ? 'Готово' : '—';
+    const onTime = a.projected && a.projected <= s.goalDate;
+
+    proj.innerHTML = `
+      <p class="label">Прогноз достижения цели</p>
+      <div class="big-number small ${onTime ? 'good-text' : 'bad-text'}">${projText}</div>
+      <p class="muted small">${
+        a.projected
+          ? `При текущем темпе. Срок: ${fmtDate(s.goalDate, { day: 'numeric', month: 'long', year: 'numeric' })}.`
+          : 'Пока недостаточно данных или снижения для прогноза.'
+      }</p>
+      <div class="progress-track"><div class="progress-fill" style="width:${a.progress}%"></div></div>
+      <p class="muted small">Прогресс к цели: ${Math.round(a.progress)}%</p>`;
+
+    const b = a.body;
+    const cards = [
+      ['Темп', a.weekRate === null ? '—' : `${signed(a.weekRate)} кг/нед`, a.weekRate !== null && a.weekRate < 0 ? 'good-text' : 'bad-text'],
+      ['Нужно', a.requiredWeek === null ? '—' : `−${fmt(a.requiredWeek, 2)} кг/нед`],
+      ['Жир', b ? `${fmt(b.bf, 1)}% (${signed(b.bfDelta, 1)})` : '—', b && b.bfDelta < 0 ? 'good-text' : ''],
+      ['Мышцы', b ? `${fmt(b.lean, 1)} кг (${signed(b.leanDelta, 1)})` : '—', b && b.leanDelta < 0 ? 'bad-text' : ''],
+    ];
+    grid.innerHTML = cards
+      .map(([l, v, c = '']) => `<div class="card"><p class="label">${l}</p><p class="stat-val ${c}" style="font-size:17px">${v}</p></div>`)
+      .join('');
+
+    ins.innerHTML = a.insights
+      .map((i) => `<div class="insight ${i.t}"><span class="dot-i"></span><p>${i.x}</p></div>`)
+      .join('');
+  }
+
+  /* ================= НАСТРОЙКИ ================= */
+  function openSettings() {
+    const s = state.settings || {};
+    $('#s-start').value = s.startWeight != null ? fmt(s.startWeight, 1) : '';
+    $('#s-goal').value = s.goalWeight != null ? fmt(s.goalWeight, 1) : '';
+    $('#s-date').value = s.goalDate || '';
+    $('#s-startdate').value = s.startDate || state.entries[0]?.date || todayISO();
+    $('#settings').showModal();
+  }
+  $$('[data-open-settings]').forEach((b) => b.addEventListener('click', openSettings));
+  $('#close-settings').addEventListener('click', () => $('#settings').close());
+
+  $('#settings-form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const startWeight = num($('#s-start'));
+    const goalWeight = num($('#s-goal'));
+    const goalDate = $('#s-date').value;
+    const startDate = $('#s-startdate').value || todayISO();
+
+    if (!startWeight || !goalWeight || !goalDate) return toast('Заполни старт, цель и дату', 'bad');
+    if (goalWeight >= startWeight) return toast('Цель должна быть ниже стартового веса', 'bad');
+    if (goalDate <= todayISO()) return toast('Дата цели должна быть в будущем', 'bad');
+
+    state.settings = { startWeight, goalWeight, goalDate, startDate };
+    save(state);
+    $('#settings').close();
+    toast('Цель сохранена 🎯');
+    renderAll();
+  });
+
+  $('#export-btn').addEventListener('click', () => exportJSON(state));
+
+  $('#import-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      if (!Array.isArray(data.entries)) throw new Error('bad');
+      state = { settings: data.settings || null, entries: data.entries };
+      save(state);
+      $('#settings').close();
+      toast('Данные импортированы');
+      renderAll();
+    } catch {
+      toast('Не получилось прочитать файл', 'bad');
+    }
+  });
+
+  $('#reset-btn').addEventListener('click', () => {
+    if (!confirm('Стереть все данные и цель?')) return;
+    state = { settings: null, entries: [] };
+    save(state);
+    $('#settings').close();
+    toast('Данные очищены');
+    renderAll();
+  });
+
+  /* ================= INIT ================= */
+  setAppIcons();
+  movePill('today');
+  renderAll();
+  } catch (err) {
+    showError(err && err.stack ? err.stack : String(err));
+  }
+  </script>
+</body>
+</html>
